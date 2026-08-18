@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>REXO | Cloud Messaging Platform</title>
+    
+    <script>
+        // ===== SECURITY =====
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'F12' || e.keyCode === 123) {
+                e.preventDefault();
+                return false;
+            }
+            if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J')) {
+                e.preventDefault();
+                return false;
+            }
+            if (e.ctrlKey && e.key === 'u') {
+                e.preventDefault();
+                return false;
+            }
+        });
+
+        document.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            return false;
+        });
+
+        document.addEventListener('selectstart', function(e) {
+            e.preventDefault();
+        });
+
+        console.log = function() {};
+        console.warn = function() {};
+        console.error = function() {};
+
+        // ===== PAGE SWITCHER =====
+        function showPage(page) {
+            document.querySelectorAll('.page').forEach(p => p.style.display = 'none');
+            document.getElementById(page).style.display = 'block';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // ===== CONFIG =====
+        const CONFIG = {
+            WORKER_URL: 'https://calm-scene-06e5.rezayoopa.workers.dev/api/versions',
+            TOKEN: 'HEYUBEDUIO09378498D2KDJE',
+            CACHE_DURATION: 15 * 60 * 1000 // 15 minutes
+        };
+
+        // ===== VERSIONS CACHE =====
+        const CACHE_KEY = 'rexo_versions';
+        const CACHE_TIME_KEY = 'rexo_versions_time';
+
+        async function fetchVersions() {
+            const cached = localStorage.getItem(CACHE_KEY);
+            const cacheTime = localStorage.getItem(CACHE_TIME_KEY);
+            const now = Date.now();
+
+            // Check cache
+            if (cached && cacheTime && (now - parseInt(cacheTime)) < CONFIG.CACHE_DURATION) {
+                console.log('📦 Loading from cache (15min)');
+                return JSON.parse(cached);
+            }
+
+            try {
+                console.log('🌐 Fetching from Worker...');
+                
+                const response = await fetch(CONFIG.WORKER_URL, {
+                    headers: {
+                        'Authorization': `Bearer ${CONFIG.TOKEN}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        throw new Error('🔒 Invalid API token. Please check your credentials.');
+                    }
+                    if (response.status === 403) {
+                        throw new Error('🚫 Access from this domain is not allowed.');
+                    }
+                    if (response.status === 404) {
+                        throw new Error('📡 Worker endpoint not found. Check the URL.');
+                    }
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                
+                if (!data.success) {
+                    throw new Error('Invalid response from server');
+                }
+
+                // Save cache
+                localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+                localStorage.setItem(CACHE_TIME_KEY, String(now));
+
+                console.log('✅ Data fetched and cached');
+                return data;
+
+            } catch (error) {
+                console.error('❌ Error:', error.message);
+                
+                // Use expired cache as fallback
+                if (cached) {
+                    console.log('⚠️ Using expired cache as fallback');
+                    return JSON.parse(cached);
+                }
+
+                throw error;
+            }
+        }
+
+        // ===== RENDER VERSIONS =====
+        async function renderVersions() {
+            const container = document.getElementById('versionGrid');
+            const loading = document.getElementById('loadingVersions');
+            const errorEl = document.getElementById('versionError');
+
+            try {
+                loading.style.display = 'block';
+                errorEl.style.display = 'none';
+                container.innerHTML = '';
+
+                const data = await fetchVersions();
+                
+                if (!data.versions || data.versions.length === 0) {
+                    throw new Error('No versions found');
+                }
+
+                const versions = data.versions;
+                
+                versions.forEach(v => {
+                    const card = document.createElement('div');
+                    card.className = 'version-card';
+                    
+                    let changesHtml = '';
+                    if (v.changes && v.changes.length > 0) {
+                        changesHtml = '<ul class="version-changes">';
+                        v.changes.forEach(change => {
+                            changesHtml += `<li>${change}</li>`;
+                        });
+                        changesHtml += '</ul>';
+                    }
+                    
+                    card.innerHTML = `
+                        <div class="version-number">${v.version}</div>
+                        <span class="version-tag ${v.tagClass || 'tag-stable'}">${v.tag || 'Stable'}</span>
+                        <div class="version-date">📅 ${v.date || 'Unknown'}</div>
+                        ${changesHtml}
+                        <div style="margin-top:12px; font-size:0.8rem; opacity:0.4;">
+                            📦 ${v.size || 'N/A'} · ${v.checksum ? v.checksum.substring(0, 20) + '...' : ''}
+                        </div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+                            <a href="${v.downloadUrl || '#'}" class="download-btn" target="_blank">⬇ Download</a>
+                            ${v.releaseNotes ? `<a href="${v.releaseNotes}" class="download-btn" style="border-color:#666; color:#666;" target="_blank">📄 Release Notes</a>` : ''}
+                        </div>
+                    `;
+                    container.appendChild(card);
+                });
+
+                // Update timestamp
+                const timeEl = document.getElementById('versionTimestamp');
+                if (timeEl && data.timestamp) {
+                    const date = new Date(data.timestamp);
+                    timeEl.textContent = `📡 Last updated: ${date.toLocaleString()} (cached 15min)`;
+                }
+
+                // Show security info
+                const securityEl = document.getElementById('securityInfo');
+                if (securityEl) {
+                    securityEl.textContent = '🔒 Secured with Bearer token authentication';
+                }
+
+                loading.style.display = 'none';
+
+            } catch (error) {
+                loading.style.display = 'none';
+                errorEl.style.display = 'block';
+                errorEl.innerHTML = `
+                    <div style="background:rgba(255,0,0,0.06); border:1px solid rgba(255,0,0,0.12); border-radius:16px; padding:28px 24px; text-align:center;">
+                        <div style="font-size:2.8rem; margin-bottom:10px;">🔒</div>
+                        <strong style="color:#d32f2f; font-size:1.1rem;">${error.message}</strong>
+                        <p style="margin-top:10px; opacity:0.6; font-size:0.9rem;">
+                            Make sure the Worker is deployed and the token matches.
+                        </p>
+                        <button onclick="renderVersions()" style="margin-top:16px; padding:10px 32px; border:2px solid #0033FF; border-radius:40px; background:transparent; color:#0033FF; font-weight:700; cursor:pointer; transition:0.2s;">
+                            🔄 Retry
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        // ===== INIT =====
+        document.addEventListener('DOMContentLoaded', function() {
+            showPage('home');
+        });
+    </script>
+
+    <style>
+        /* ===== RESET & BASE ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        *:focus {
+            outline: none !important;
+        }
+        *:focus-visible {
+            outline: none !important;
+        }
+
+        html, body {
+            width: 100%;
+            min-height: 100vh;
+            overflow-x: hidden;
+            background: #f0f4ff;
+        }
+
+        body {
+            font-family: -apple-system, 'Segoe UI', Roboto, system-ui, sans-serif;
+            color: #0a0a1e;
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 0;
+            margin: 0;
+            background: linear-gradient(145deg, #f0f4ff 0%, #e6edff 100%);
+        }
+
+        .container {
+            width: 100%;
+            min-height: 100vh;
+            padding: 20px 30px 30px;
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .inner {
+            max-width: 1300px;
+            width: 100%;
+            margin: 0 auto;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ===== HEADER ===== */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 10px 0 30px;
+            border-bottom: 1px solid rgba(0, 51, 255, 0.06);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            cursor: pointer;
+        }
+
+        .brand svg {
+            width: 52px;
+            height: 52px;
+            filter: drop-shadow(0 8px 24px rgba(0, 51, 255, 0.2));
+            transition: transform 0.3s ease;
+        }
+
+        .brand svg:hover {
+            transform: rotate(-6deg) scale(1.06);
+        }
+
+        .brand h1 {
+            font-size: 2.2rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, #0033FF, #4a7aff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .brand .tag {
+            font-size: 0.75rem;
+            background: rgba(0, 51, 255, 0.08);
+            padding: 4px 14px;
+            border-radius: 40px;
+            color: #0033FF;
+            font-weight: 600;
+            border: 1px solid rgba(0, 51, 255, 0.1);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .nav {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .nav a, .nav button {
+            color: #1a1a2e;
+            text-decoration: none;
+            padding: 10px 22px;
+            border-radius: 40px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            transition: 0.2s;
+            opacity: 0.7;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .nav a:hover, .nav button:hover {
+            opacity: 1;
+            background: rgba(0, 51, 255, 0.04);
+        }
+
+        .nav .btn-version {
+            background: transparent;
+            border: 2px solid #0033FF;
+            padding: 10px 28px;
+            border-radius: 40px;
+            color: #0033FF;
+            font-weight: 700;
+            opacity: 1;
+            cursor: pointer;
+        }
+
+        .nav .btn-version:hover {
+            background: #0033FF;
+            color: #fff;
+            border-color: #0033FF;
+        }
+
+        /* ===== PAGES ===== */
+        .page {
+            display: none;
+            animation: fadeIn 0.4s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ===== HOME PAGE ===== */
+        .hero {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+            padding: 50px 0 70px;
+        }
+
+        .hero-text h2 {
+            font-size: 4rem;
+            font-weight: 900;
+            line-height: 1.08;
+            margin-bottom: 18px;
+            background: linear-gradient(145deg, #0a0a2e, #0033FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
+        }
+
+        .hero-text .subtitle {
+            font-size: 1.25rem;
+            opacity: 0.7;
+            max-width: 90%;
+            margin-bottom: 32px;
+            font-weight: 400;
+            line-height: 1.7;
+            color: #1a1a2e;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            background: rgba(0, 51, 255, 0.06);
+            padding: 6px 24px;
+            border-radius: 60px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #0033FF;
+            margin-bottom: 16px;
+            border: 1px solid rgba(0, 51, 255, 0.08);
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
+
+        .btn-check-version {
+            background: #0033FF;
+            color: #fff;
+            padding: 16px 48px;
+            border-radius: 60px;
+            border: none;
+            font-weight: 700;
+            font-size: 1.05rem;
+            cursor: pointer;
+            transition: 0.25s ease;
+            box-shadow: 0 12px 32px rgba(0, 51, 255, 0.25);
+            text-decoration: none;
+            display: inline-block;
+            font-family: inherit;
+        }
+
+        .btn-check-version:hover {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 20px 48px rgba(0, 51, 255, 0.35);
+        }
+
+        .btn-check-version:active {
+            transform: scale(0.97);
+        }
+
+        .hero-visual {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .hero-card {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 44px;
+            padding: 36px 28px;
+            width: 100%;
+            max-width: 400px;
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 30px 60px -16px rgba(0, 0, 0, 0.06);
+            text-align: left;
+        }
+
+        .hero-card .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            opacity: 0.6;
+        }
+
+        .hero-card .msg-bubble {
+            background: #0033FF;
+            color: #fff;
+            padding: 14px 20px;
+            border-radius: 20px 20px 20px 4px;
+            margin: 8px 0;
+            font-size: 0.9rem;
+            max-width: 85%;
+            display: inline-block;
+        }
+
+        .hero-card .msg-bubble.light {
+            background: #eef3ff;
+            color: #1a1a2e;
+            border-radius: 20px 20px 4px 20px;
+            float: right;
+        }
+
+        .hero-card .msg-bubble.system {
+            background: rgba(0, 51, 255, 0.05);
+            color: #0033FF;
+            border-radius: 40px;
+            font-size: 0.75rem;
+            padding: 6px 18px;
+            display: block;
+            max-width: 100%;
+            text-align: center;
+            border: 1px solid rgba(0, 51, 255, 0.04);
+        }
+
+        .hero-card .clearfix::after {
+            content: '';
+            display: table;
+            clear: both;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00c853;
+            display: inline-block;
+        }
+
+        .features {
+            margin: 40px 0 60px;
+            padding: 40px 0;
+        }
+
+        .features .section-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            color: #0033FF;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .features h3 {
+            font-size: 3rem;
+            font-weight: 800;
+            margin-bottom: 44px;
+            background: linear-gradient(145deg, #0a0a2e, #0033FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 32px;
+        }
+
+        .feature-item {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            padding: 34px 26px;
+            border-radius: 32px;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            transition: 0.3s ease;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.02);
+        }
+
+        .feature-item:hover {
+            transform: translateY(-10px) scale(1.01);
+            background: rgba(255, 255, 255, 0.7);
+            box-shadow: 0 24px 48px rgba(0, 51, 255, 0.06);
+        }
+
+        .feature-item .icon {
+            font-size: 2.6rem;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .feature-item h4 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .feature-item p {
+            opacity: 0.65;
+            font-size: 0.95rem;
+            color: #1a1a2e;
+        }
+
+        /* ===== VERSIONS PAGE ===== */
+        .versions-hero {
+            padding: 40px 0 20px;
+            text-align: center;
+        }
+
+        .versions-hero .badge {
+            display: inline-block;
+            background: rgba(0, 51, 255, 0.06);
+            padding: 6px 24px;
+            border-radius: 60px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #0033FF;
+            border: 1px solid rgba(0, 51, 255, 0.08);
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .versions-hero h1 {
+            font-size: 3.5rem;
+            font-weight: 900;
+            background: linear-gradient(145deg, #0a0a2e, #0033FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        .versions-hero p {
+            font-size: 1.2rem;
+            opacity: 0.6;
+            color: #1a1a2e;
+        }
+
+        .versions-hero .cache-info {
+            margin-top: 8px;
+            font-size: 0.85rem;
+            opacity: 0.5;
+        }
+
+        #versionError {
+            display: none;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        #securityInfo {
+            font-size: 0.8rem;
+            opacity: 0.5;
+            margin-top: 6px;
+        }
+
+        .version-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 30px;
+            padding: 30px 0 50px;
+        }
+
+        .version-card {
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 36px;
+            padding: 32px 30px;
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 20px 50px -16px rgba(0, 0, 0, 0.04);
+            transition: 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .version-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(0, 51, 255, 0.03), transparent 70%);
+            transition: 0.6s;
+            pointer-events: none;
+        }
+
+        .version-card:hover::before {
+            transform: scale(1.5);
+        }
+
+        .version-card:hover {
+            transform: translateY(-12px) scale(1.01);
+            background: rgba(255, 255, 255, 0.75);
+            box-shadow: 0 32px 64px rgba(0, 51, 255, 0.08);
+        }
+
+        .version-card .version-number {
+            font-size: 2.8rem;
+            font-weight: 900;
+            background: linear-gradient(135deg, #0033FF, #4a7aff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        .version-card .version-tag {
+            display: inline-block;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 4px 16px;
+            border-radius: 40px;
+            margin-bottom: 12px;
+        }
+
+        .version-card .tag-stable {
+            background: rgba(0, 200, 83, 0.12);
+            color: #00c853;
+            border: 1px solid rgba(0, 200, 83, 0.15);
+        }
+
+        .version-card .tag-beta {
+            background: rgba(255, 152, 0, 0.12);
+            color: #ff9800;
+            border: 1px solid rgba(255, 152, 0, 0.15);
+        }
+
+        .version-card .tag-legacy {
+            background: rgba(156, 39, 176, 0.12);
+            color: #9c27b0;
+            border: 1px solid rgba(156, 39, 176, 0.15);
+        }
+
+        .version-card .tag-rc {
+            background: rgba(33, 150, 243, 0.12);
+            color: #2196f3;
+            border: 1px solid rgba(33, 150, 243, 0.15);
+        }
+
+        .version-card .version-date {
+            font-size: 0.85rem;
+            opacity: 0.5;
+            margin-bottom: 10px;
+        }
+
+        .version-card .version-changes {
+            list-style: none;
+            padding: 0;
+            margin: 12px 0 0;
+        }
+
+        .version-card .version-changes li {
+            padding: 4px 0;
+            font-size: 0.9rem;
+            opacity: 0.7;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .version-card .version-changes li::before {
+            content: '▸';
+            color: #0033FF;
+            font-weight: 700;
+        }
+
+        .version-card .download-btn {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 10px 28px;
+            background: transparent;
+            border: 2px solid #0033FF;
+            border-radius: 40px;
+            color: #0033FF;
+            font-weight: 700;
+            font-size: 0.85rem;
+            text-decoration: none;
+            transition: 0.25s;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .version-card .download-btn:hover {
+            background: #0033FF;
+            color: #fff;
+            border-color: #0033FF;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #1a1a2e;
+            text-decoration: none;
+            font-weight: 500;
+            opacity: 0.6;
+            transition: 0.2s;
+            margin: 10px 0 20px;
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-size: 1rem;
+            font-family: inherit;
+        }
+
+        .back-link:hover {
+            opacity: 1;
+        }
+
+        #loadingVersions {
+            text-align: center;
+            padding: 60px 20px;
+            font-size: 1.2rem;
+            opacity: 0.6;
+        }
+
+        /* ===== FOOTER ===== */
+        .footer {
+            margin-top: 40px;
+            padding-top: 28px;
+            border-top: 1px solid rgba(0, 0, 0, 0.04);
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+            font-size: 0.85rem;
+            opacity: 0.4;
+        }
+
+        .footer a {
+            color: #1a1a2e;
+            text-decoration: none;
+            margin-left: 20px;
+            transition: 0.2s;
+        }
+
+        .footer a:hover {
+            opacity: 1;
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 968px) {
+            .container { padding: 16px 18px 24px; }
+            .hero { grid-template-columns: 1fr; gap: 40px; padding: 30px 0 50px; }
+            .hero-text h2 { font-size: 3rem; }
+            .hero-text .subtitle { max-width: 100%; }
+            .brand h1 { font-size: 1.8rem; }
+            .features h3 { font-size: 2.4rem; }
+            .versions-hero h1 { font-size: 2.8rem; }
+            .version-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+        }
+
+        @media (max-width: 600px) {
+            .container { padding: 12px 14px 20px; }
+            .header { flex-direction: column; align-items: stretch; gap: 12px; }
+            .nav { gap: 4px; justify-content: center; }
+            .nav a, .nav button { padding: 8px 16px; font-size: 0.85rem; }
+            .hero-text h2 { font-size: 2.2rem; }
+            .hero { padding: 20px 0 30px; gap: 28px; }
+            .btn-check-version { width: 100%; text-align: center; padding: 14px 24px; }
+            .feature-grid { grid-template-columns: 1fr; }
+            .feature-item { padding: 24px 20px; }
+            .brand svg { width: 40px; height: 40px; }
+            .brand h1 { font-size: 1.5rem; }
+            .footer { flex-direction: column; align-items: center; text-align: center; }
+            .footer a { margin: 0 10px; }
+            .hero-card { padding: 24px 18px; }
+            .versions-hero h1 { font-size: 2.2rem; }
+            .version-grid { grid-template-columns: 1fr; }
+            .version-card { padding: 24px 20px; }
+            .version-card .version-number { font-size: 2.2rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="inner">
+
+            <!-- ===== HEADER ===== -->
+            <header class="header">
+                <div class="brand" onclick="showPage('home')">
+                    <svg viewBox="0 0 24 24" width="52" height="52">
+                        <path d="M5.486 0c-1.92 0-2.881 0-3.615.373A3.428 3.428 0 0 0 .373 1.871C-.001 2.605 0 3.566 0 5.486v9.6c0 1.92 0 2.88.373 3.613.329.645.853 1.17 1.498 1.498.734.374 1.695.375 3.615.375h11.657V24l.793-.396c2.201-1.101 3.3-1.652 4.105-2.473a6.852 6.852 0 0 0 1.584-2.56C24 17.483 24 16.251 24 13.79V5.486c0-1.92 0-2.881-.373-3.615A3.428 3.428 0 0 0 22.129.373C21.395-.001 20.434 0 18.514 0H5.486zm1.371 10.285h10.286a5.142 5.142 0 0 1-10.286.024v-.024z" fill="#0033FF"/>
+                    </svg>
+                    <div>
+                        <h1>REXO</h1>
+                    </div>
+                    <span class="tag">Cloud</span>
+                </div>
+                <nav class="nav">
+                    <button onclick="showPage('home')">Home</button>
+                    <button onclick="showPage('versions'); renderVersions();" class="btn-version">Check Versions</button>
+                </nav>
+            </header>
+
+            <!-- ============================================================ -->
+            <!-- ===== PAGE: HOME ===== -->
+            <!-- ============================================================ -->
+            <div id="home" class="page">
+
+                <section class="hero">
+                    <div class="hero-text">
+                        <div class="hero-badge">⚡ v1.0 · Stable Release</div>
+                        <h2>Cloud Messaging<br />at Light Speed</h2>
+                        <p class="subtitle">
+                            REXO is a next-generation, ultra-lightweight cloud messaging platform 
+                            engineered for global scale. Deliver messages in under 200ms with 
+                            end-to-end encryption and zero infrastructure overhead.
+                        </p>
+                        <div class="cta-group">
+                            <button onclick="showPage('versions'); renderVersions();" class="btn-check-version">Check Version</button>
+                        </div>
+                    </div>
+                    <div class="hero-visual">
+                        <div class="hero-card">
+                            <div class="chat-header">
+                                <span>Live Chat</span>
+                                <span><span class="dot"></span> 12k online</span>
+                            </div>
+                            <div class="msg-bubble">Hey! Project is ready for deployment 🚀</div>
+                            <div class="msg-bubble light" style="float:right;">Perfect, testing it now</div>
+                            <div class="clearfix"></div>
+                            <div class="msg-bubble" style="border-radius:20px 20px 4px 20px; background:#4a7aff;">Delivered in 187ms</div>
+                            <div class="msg-bubble system">⚡ Secure · EU Region</div>
+                            <div style="margin-top:12px; font-size:0.7rem; opacity:0.3; text-align:center;">
+                                End-to-End Encrypted
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="features">
+                    <div class="section-label">✦ Core Features</div>
+                    <h3>Everything You Need</h3>
+                    <div class="feature-grid">
+                        <div class="feature-item">
+                            <span class="icon">🌍</span>
+                            <h4>Global & Modern</h4>
+                            <p>Built with 2026 standards, fully localized for 40+ languages</p>
+                        </div>
+                        <div class="feature-item">
+                            <span class="icon">🎨</span>
+                            <h4>Breathtaking Design</h4>
+                            <p>Glassmorphism, soft lighting, and micro-interactions</p>
+                        </div>
+                        <div class="feature-item">
+                            <span class="icon">🧠</span>
+                            <h4>Creative Architecture</h4>
+                            <p>Dynamic grids, intelligent animations, and unique UX</p>
+                        </div>
+                        <div class="feature-item">
+                            <span class="icon">⚡</span>
+                            <h4>Ultra Optimized</h4>
+                            <p>Zero lag on 5-year-old devices — under 30MB RAM usage</p>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- ===== PAGE: VERSIONS ===== -->
+            <!-- ============================================================ -->
+            <div id="versions" class="page">
+
+                <button class="back-link" onclick="showPage('home')">← Back to Home</button>
+
+                <section class="versions-hero">
+                    <div class="badge">📦 Release History</div>
+                    <h1>REXO Versions</h1>
+                    <p>All releases of the REXO Cloud Messaging Platform</p>
+                    <div class="cache-info" id="versionTimestamp">📡 Loading versions...</div>
+                    <div id="securityInfo"></div>
+                </section>
+
+                <div id="loadingVersions">⏳ Loading versions from Cloudflare Worker...</div>
+                <div id="versionError"></div>
+                <div id="versionGrid" class="version-grid"></div>
+
+            </div>
+
+            <!-- ===== FOOTER ===== -->
+            <footer class="footer">
+                <div>
+                    <strong>REXO</strong> · Cloud Messaging Platform
+                </div>
+                <div>
+                    <a href="#">Terms</a>
+                    <a href="#">Privacy</a>
+                    <a href="#">GitHub</a>
+                    <a href="#">Status</a>
+                    <span style="opacity:0.4;">© 2026</span>
+                </div>
+            </footer>
+
+        </div>
+    </div>
+
+</body>
+</html>
