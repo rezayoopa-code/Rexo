@@ -1,0 +1,75 @@
+name: Build markwon-ext-latex AAR
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
+
+    steps:
+      - name: Checkout workflow repo (this repo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clone upstream FluidMarkdown
+        run: |
+          git clone --depth=1 https://github.com/antgroup/FluidMarkdown.git FluidMarkdown
+
+      - name: Verify markwon-ext-latex module exists
+        run: |
+          if [ ! -f FluidMarkdown/Android/AntFluid/settings.gradle ]; then
+            echo "FluidMarkdown/Android/AntFluid/settings.gradle not found"
+            exit 1
+          fi
+          grep -q "markwon-ext-latex" FluidMarkdown/Android/AntFluid/settings.gradle || { echo "Module ':markwon-ext-latex' not found in settings.gradle"; exit 1; }
+          echo "Module ':markwon-ext-latex' found."
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK command-line tools and packages
+        run: |
+          set -eux
+          ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          curl -sSLo cmdline-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
+          unzip -q cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" ]; then
+            mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true
+          fi
+          export ANDROID_SDK_ROOT
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="${ANDROID_SDK_ROOT}" "platform-tools" "platforms;android-31" "build-tools;31.0.0"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="${ANDROID_SDK_ROOT}" --licenses
+
+      - name: Export ANDROID_SDK_ROOT
+        run: echo "ANDROID_SDK_ROOT=$HOME/Android/Sdk" >> $GITHUB_ENV
+
+      - name: Make gradlew executable
+        run: chmod +x FluidMarkdown/Android/AntFluid/gradlew
+
+      - name: Build markwon-ext-latex AAR
+        working-directory: FluidMarkdown/Android/AntFluid
+        run: ./gradlew :markwon-ext-latex:assembleRelease --no-daemon --stacktrace
+
+      - name: Upload AAR as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: markwon-ext-latex-aar
+          path: FluidMarkdown/Android/AntFluid/markwon-ext-latex/build/outputs/aar/*.aar
+
+      - name: Create GitHub Release and attach AAR
+        uses: ncipollo/release-action@v1
+        with:
+          tag: build-${{ github.run_id }}
+          name: AAR build ${{ github.run_id }}
+          files: |
+            FluidMarkdown/Android/AntFluid/markwon-ext-latex/build/outputs/aar/*.aar
